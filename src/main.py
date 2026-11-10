@@ -1,6 +1,8 @@
 from ast import parse
 import json
 import requests
+from requests import structures
+from requests.models import Response
 from dotenv import load_dotenv
 import os
 import csv
@@ -9,9 +11,9 @@ import re
 from datetime import datetime
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--gyms", "-g", nargs="+", type=str, default=None)
-parser.add_argument("--csv", type=bool, default=None)
-parser.add_argument("--discord", "-d", type=bool, default=None)
+parser.add_argument("--gyms", "-g", nargs="+", type=int, default=None)
+parser.add_argument("--csv", action="store_true")
+parser.add_argument("--discord", "-d", action="store_true")
 
 args = parser.parse_args()
 
@@ -30,6 +32,7 @@ PASS = os.environ.get("Password", None)
 
 if args.gyms:
     GYM = args.gyms
+    GYM = " ".join(map(str, GYM))
 else:
     GYM = os.environ.get("Gyms", None)
 
@@ -37,17 +40,17 @@ else:
 ### CSV
 # this makes CSV be the config value if the args.csv argument is false(not given) or it's content isn't in the typical bool values (true, false)
 if args.csv:
-    CSV = str(args.csv)
+    CSV = args.csv
 else:
-    CSV = os.environ.get("CSV", "true")
+    CSV = os.environ.get("CSV", "true").lower().strip()
 
-CSV = CSV.lower().strip()
+CSV = str(CSV).strip().lower()
 
-if CSV not in ["true", "false"]:
-    raise ValueError("CSV accepts only 'true' or 'false' as inputs. Change your config")
+if CSV in ["true", "false"]:
+    CSV = CSV == "true"
 else:
     # takes false if csv not 'true'
-    CSV = CSV == "true"
+    raise ValueError("CSV accepts only 'true' or 'false' as inputs. Change your config")
 
 ### DISCORD
 if args.discord:
@@ -55,14 +58,14 @@ if args.discord:
 else:
     DISCORD = os.environ.get("Discord", "true")
 
-DISCORD = DISCORD.strip().lower()
+DISCORD = str(DISCORD).strip().lower()
 
-if DISCORD not in ["true", "false"]:
+if DISCORD in ["true", "false"]:
+    DISCORD = DISCORD == "true"
+else:
     raise ValueError(
         "Discord cmd argument and config value only accept 'true' or 'false' (or their variations) as inputs. Change your config"
     )
-else:
-    DISCORD = bool(DISCORD)
 
 DISCORD_URL = os.environ.get("Discord_url", None)
 if DISCORD_URL:
@@ -72,24 +75,23 @@ if DISCORD_URL:
         raise ValueError(
             "Discord_url value doesn't look like a discord webhook link. The link must look similarly to 'https://discord.com/api/webhooks/123456789/qwerty12345'"
         )
+else:
+    print("DISCORD_URL not found! A webhook message won't be sent!")
 
 
 def request_error(response: requests.Response):
+    error_msg = f"The response from {response.url} came out with {response.status_code}"
     try:
-        data = response.json()
-        failed = 0
+        error_msg += f"\nThe json response is {response.json()}"
     except requests.exceptions.JSONDecodeError:
-        failed = 1
-    if response.status_code == 499:
-        additional_info = "The problem might be with the authentication, make sure you're credentials in config.env are correct."
-    raise RuntimeWarning(
-        f"The response from {LOGIN_URL} came out with {response.status_code} \n The json response is {data if failed == 0 else 'Failed to convert response to json'}. \n {f'Some additional error information: {additional_info}' if additional_info else ''}"
-    )
+        error_msg += "\nFailed to retrieve JSON"
+
+    error_msg += f"\nSome additional error information: {'The problem might be with the authentication, make sure your credentials in config.env are correct.' if response.status_code == 499 else ''}"
+    raise RuntimeWarning(error_msg)
 
 
 def login(s: requests.sessions.Session):
     data = {"RememberMe": "true", "Login": LOGIN, "Password": PASS}
-    print(LOGIN, PASS)
     response = s.post(url=LOGIN_URL, json=data)
     if not response.ok:
         request_error(response)
@@ -116,7 +118,7 @@ def get_gyms():
                 GYMS_normal[i["ID"]] = i["club_name"]
 
     if len(GYMS) != len(GYMS_normal):
-        missing = [i for i in GYMS if i not in GYMS_normal.keys()]
+        missing = [i for i in GYMS if i not in GYMS_normal]
         print(f"Did not match following IDs with clubs.csv: \n{', '.join(missing)}")
 
     return list(GYMS_normal.values())
@@ -124,17 +126,20 @@ def get_gyms():
 
 def save_to_CSV(data: dict[str, str]):
     fieldnames = ["GymName", "Date", "Raw ppl count"]
-    mode = "r+"
     date = datetime.now().isoformat(timespec="minutes")
 
-    if not os.path.exists("data/logs.csv"):
-        mode = "a+"
+    file_name = "data/logs.csv"
 
-    with open("data/logs.csv", mode=mode, newline="", encoding="utf-8") as file:
+    if not os.path.exists(file_name):
+        open(file_name, "a").close()
+
+    with open(file_name, mode="r+", encoding="utf-8") as file:
+        rows = file.readlines()
+        if rows and rows[0].strip() != f"{','.join(fieldnames)}":
+            print("The file does not have a header, add the header")
+
+    with open(file_name, mode="a", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
-
-        if next(csv.reader(file), None) != writer.fieldnames:
-            writer.writeheader()
 
         for k, v in data.items():
             writer.writerow({"GymName": k, "Date": date, "Raw ppl count": v})

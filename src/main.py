@@ -1,5 +1,6 @@
 from ast import parse
 import json
+from warnings import filters
 import requests
 from requests import structures
 from requests.models import Response
@@ -124,21 +125,28 @@ def get_gyms():
     return list(GYMS_normal.values())
 
 
+def handle_headers(rows: list[str], filename: str, fieldnames: list[str]):
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(f"{','.join(fieldnames)}\n")
+        f.writelines(rows)
+
+
 def save_to_CSV(data: dict[str, str]):
     fieldnames = ["GymName", "Date", "Raw ppl count"]
     date = datetime.now().isoformat(timespec="minutes")
 
-    file_name = "data/logs.csv"
+    filename = "data/logs.csv"
 
-    if not os.path.exists(file_name):
-        open(file_name, "a").close()
+    if not os.path.exists(filename):
+        open(filename, "a").close()
 
-    with open(file_name, mode="r+", encoding="utf-8") as file:
+    with open(filename, mode="r", encoding="utf-8") as file:
         rows = file.readlines()
-        if rows and rows[0].strip() != f"{','.join(fieldnames)}":
-            print("The file does not have a header, add the header")
 
-    with open(file_name, mode="a", newline="", encoding="utf-8") as file:
+    if not rows or rows[0].strip() != f"{','.join(fieldnames)}":
+        handle_headers(rows=rows, filename=filename, fieldnames=fieldnames)
+
+    with open(filename, mode="a", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
 
         for k, v in data.items():
